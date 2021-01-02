@@ -1,6 +1,25 @@
-# El propósito de éste análisis es meramente educativo.
+---
+title: "Rezago habitacional en México"
+author: "Will Santana"
+based_on: "Trabajo de Claudio @claudiodanielpc"
+date: "12/29/2020"
+output:
+  prettydoc::html_pretty:
+    theme: leonids
+    highlight: github
+---
 
-# Cargamos las librerias
+```{r setup, include=FALSE, echo=TRUE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = T)
+```
+
+
+```{r Descripción}
+# El propósito de éste análisis es meramente educativo.
+```
+
+
+```{r Cargamos las librerias}
 library(plyr); library(dplyr)
 library(tidyverse)
 library(readxl)
@@ -8,8 +27,10 @@ library(readr)
 library(srvyr)
 library(ggplot2)
 library(ggthemes)
+```
 
-# Leemos los datos desde archivos
+
+```{r Leemos los datos desde archivos}
 # Inicializamos las variables con las rutas de los archivos
 vivienda_file <- "data/enigh/viviendas.csv"
 catalogo_file <- "data/claves.xlsx"
@@ -25,9 +46,11 @@ names(cata) <- c("cve_ent", "nom_ent")
 # Eliminamos variables innecesarias
 rm(vivienda_file)
 rm(catalogo_file)
+```
 
 
-# Cargamos los datos
+```{r Cargamos los datos}
+
 # Si la longitud de la variable folio es de nueve, le agregamos un cero (0)
 # al inicio para formatear todos los códigos a dos dígitos, en caso contrario
 # se lee el código de dos dígitos, sin agregar nada.
@@ -44,9 +67,10 @@ vivienda_nacional <- vivienda
 
 rm(vivi)
 rm(cata)
+```
 
 
-# Aplicamos la condición para identificar el tipo de rezago
+```{r Aplicamos la condición para identificar el tipo de rezago}
 # Debido a que la columna mat_pisos contiene factores, debemos transformarla
 # a valores numéricos
 vivienda <- transform(vivienda, mat_pisos = as.numeric(mat_pisos))
@@ -70,9 +94,10 @@ vivienda <- vivienda %>%
                        (mat_pisos == 2) |
                        (excusado == 2) ~ "En rezago",
                      TRUE ~ "Fuera de rezago"))
+```
 
 
-# Calculamos el rezago total
+```{r Calculamos el rezago total}
 # En los dos factores: "En rezago" y "Fuera de rezago"
 rezago_total <- vivienda %>% 
   group_by(rezago) %>%
@@ -80,9 +105,10 @@ rezago_total <- vivienda %>%
   mutate(pct = round(total / sum(total) * 100, 2))
 
 rezago_total
+```
 
 
-# Gráfico: Rezago total (sencillo)
+```{r Gráfico: Rezago total (sencillo)}
 # Colores de gráfico
 colores <- c("#E13F29", "#D69A80", "#FFFFFF")
 
@@ -93,9 +119,10 @@ lbls <- paste(lbls, pct)
 lbls <- paste(lbls, "%", sep="")
 # Gráfico de pastel (pie chart), con los datos de rezago
 pie(slices, labels = lbls, edges = 200, main = "México. Parque habitacional por condición de rezago, 2018", col = colores, border = "white")
+```
 
 
-# Gráfico: Rezago total (ggplot)
+```{r Gráfico: Rezago total (ggplot)}
 # Colores de gráfico
 colores <- c("#E13F29", "#D69A80", "#FFFFFF")
 
@@ -122,19 +149,21 @@ ggplot(df.data, aes(x = "", y = Valores, fill = Categorías)) +
 
 ggsave("imagenes/Figura_1.png", plot = last_plot(), width = 9, height = 4, units = "in", dpi = 150)
 rm(df.data)
+```
 
 
-# Calculamos el rezago por entidad
+```{r Calculamos el rezago por entidad}
 rezago_entidad <- vivienda %>% 
   srvyr::group_by(nom_ent, rezago) %>%
   dplyr::summarize(rez_ent = sum(factor), .groups = "drop") %>% 
-  filter(rezago != "Fuera de rezago") %>% 
+  filter(rezago == "En rezago") %>% 
   mutate(pct_ent = rez_ent / sum(rez_ent) * 100)
 
 rezago_entidad
+```
 
 
-# Gráfico: Rezago por entidad
+```{r Gráfico: Rezago por entidad}
 ggplot(rezago_entidad,
        aes(x=pct_ent, y=reorder(nom_ent,pct_ent))) +
   geom_bar(stat="identity", color = "white", position="dodge") +
@@ -159,3 +188,63 @@ ggplot(rezago_entidad,
                                      lineheight = 0.9))
 
 ggsave("imagenes/Figura_2.png", plot = last_plot(), width = 6, height = 9, units = "in", dpi = 600)
+```
+
+
+```{r Calculamos el rezago en cada entidad}
+con_rezago_entidad <- vivienda %>% 
+  srvyr::group_by(nom_ent, rezago) %>%
+  dplyr::summarize(rez_ent = sum(factor), .groups = "drop") %>% 
+  filter(rezago == "En rezago") %>% 
+  select(nom_ent, rez_ent)
+
+sin_rezago_entidad <- vivienda %>% 
+  srvyr::group_by(nom_ent, rezago) %>%
+  dplyr::summarize(rez_ent = sum(factor), .groups = "drop") %>% 
+  filter(rezago == "Fuera de rezago") %>% 
+  select(nom_ent, rez_ent)
+names(sin_rezago_entidad) <- c("nom_ent", "rez_nac")
+
+# rezago_nacional <- cbind(con_rezago_entidad, sin_rezago_entidad$rez_ent)
+rezago_nacional <- merge (con_rezago_entidad, 
+                          sin_rezago_entidad, 
+                          by = "nom_ent")
+
+# Eliminamos las variables innecesarias:
+rm(con_rezago_entidad)
+rm(sin_rezago_entidad)
+
+rezago_nacional <- rezago_nacional %>% 
+  mutate(rez_tot = rez_ent + rez_nac,
+         pct = rez_ent / rez_tot * 100)
+
+rezago_nacional
+```
+
+
+```{r Gráfico: Rezago nacional dentro de cada entidad}
+ggplot(rezago_nacional,
+       aes(x=pct, y=reorder(nom_ent, pct))) +
+  geom_bar(stat="identity", color = "white", position="dodge") +
+  geom_col(aes(fill = pct)) +
+  scale_fill_gradient(low=colores[2], high = colores[1]) +
+  labs(
+    title = "México. Parque habitacional en rezago habitacional por entidad federativa, 2018 \n (% del total de cada entidad)",
+    subtitle = "Fuente: INEGI. Encuesta Nacional de Ingresos y Gastos de los Hogares (ENIGH) 2018",
+    caption = "@willshDev",
+    fill = "Porcentaje",
+    x = "Porcentaje de rezago habitacional\nFuente: INEGI. Encuesta Nacional de Ingresos y Gastos de los Hogares (ENIGH) 2018",
+    y = ""
+  ) +
+  theme(plot.title = element_text(color = "black", 
+                                  size = 10, 
+                                  face = "bold", 
+                                  hjust = 0.5,
+                                  lineheight = 0.9),
+        plot.subtitle = element_text(color = "black",
+                                     size = 8, 
+                                     hjust = 0.5,
+                                     lineheight = 0.9))
+
+ggsave("imagenes/Figura_3.png", plot = last_plot(), width = 6, height = 9, units = "in", dpi = 600)
+```
