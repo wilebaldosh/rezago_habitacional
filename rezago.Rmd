@@ -61,8 +61,6 @@ vivi <- vivi %>%
 
 # Unimos los dos dataframe y lo asignamos a vivienda
 vivienda <- full_join(vivi, cata, by = "cve_ent")
-# Eliminamos la columna largo
-vivienda <- vivienda[, -c(65)]
 
 # Vivienda Nacional
 vivienda_nacional <- vivienda
