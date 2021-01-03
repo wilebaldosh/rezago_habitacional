@@ -7,107 +7,90 @@ output:
   prettydoc::html_pretty:
     theme: leonids
     highlight: github
+    toc: TRUE
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, echo=TRUE, message=FALSE, warning=FALSE}
-knitr::opts_chunk$set(echo = T)
+knitr::opts_chunk$set(echo = T, message = F, warning = F)
 ```
 
+El propósito de éste análisis es meramente educativo.
 
-```{r Descripción}
-# El propósito de éste análisis es meramente educativo.
-```
-
-
-```{r Cargamos las librerias}
-library(plyr); library(dplyr)
+# Librerías 
+```{r Librerías}
+options(tidyverse.quiet = T)
 library(tidyverse)
-library(readxl)
-library(readr)
-library(srvyr)
-library(ggplot2)
-library(ggthemes)
 ```
 
-
-```{r Leemos los datos desde archivos}
-# Inicializamos las variables con las rutas de los archivos
-vivienda_file <- "data/enigh/viviendas.csv"
-catalogo_file <- "data/claves.xlsx"
-
+# Lectura
+```{r Lectura}
 # Cargamos los datos:
 # Vivienda
-vivi <- read.csv(vivienda_file, na.strings = "NA")
+vivi <- read_csv("data/enigh/viviendas.csv", 
+                 guess_max = 70e3) 
 # Catálogo de entidades
-cata <- readxl::read_excel(catalogo_file, range ="A4:B36")
-# Modificamos el nombre de las columnas del dataframe cata
-names(cata) <- c("cve_ent", "nom_ent")
-
-# Eliminamos variables innecesarias
-rm(vivienda_file)
-rm(catalogo_file)
+cata <- readxl::read_excel("data/claves.xlsx", range ="A4:B36") %>% 
+  janitor::clean_names() %>% 
+  rename(cve_ent = clave_de_agee,
+         nom_ent = nombre_de_agee)
 ```
 
 
-```{r Cargamos los datos}
-
-# Si la longitud de la variable folio es de nueve, le agregamos un cero (0)
-# al inicio para formatear todos los códigos a dos dígitos, en caso contrario
-# se lee el código de dos dígitos, sin agregar nada.
-vivi <- vivi %>% 
-  mutate(cve_ent = ifelse(nchar(folioviv) == 9,
-                          paste0("0", str_sub(folioviv, 1, 1)),
-                          str_sub(folioviv, 1, 2)))
-
-# Unimos los dos dataframe y lo asignamos a vivienda
-vivienda <- full_join(vivi, cata, by = "cve_ent")
+# Limpieza (wrangling)
+Unimos los dos dataframe y lo asignamos a vivienda
+```{r Limpieza}
+vivienda <- vivi %>% 
+  mutate(cve_ent = str_sub(folioviv, end = 2L)) %>% 
+  left_join(cata, by = "cve_ent")
 
 # Vivienda Nacional
 vivienda_nacional <- vivienda
-
-rm(vivi)
-rm(cata)
 ```
 
 
-```{r Aplicamos la condición para identificar el tipo de rezago}
-# Debido a que la columna mat_pisos contiene factores, debemos transformarla
-# a valores numéricos
-vivienda <- transform(vivienda, mat_pisos = as.numeric(mat_pisos))
+Hay columnas de material cuya lectura se realizó a caracter,
+pero se parsean sin mayor problema.  
+Una observación especial es mat_pisos, por contener "&" como representación de NA
 
-# Buscamos bajo el siguiente criterio:
-# Se cumple: rezago = "En rezago"
-# No se cumple: rezago = "Fuera de rezago"
-# Nota: Debido que al convertir la varibale 'mat_pisos', el caracter '&'
-# se convierte en 1, el valor más grande que tenía antes, el 3, se convierte
-# en 4, cambiamos la condición de:
-# (mat_pisos == 1) |
-# a
-# (mat_pisos == 2) |
+```{r Id del tipo de rezago}
+
 vivienda <- vivienda %>%
-  mutate(rezago =
-           case_when(((tot_resid/num_cuarto) > 2.5) |
-                       ((mat_pared >= 1) & (mat_pared <= 6)) |
-                       ((mat_techos >= 1) & (mat_techos <= 4)) |
-                       ((mat_techos >= 6) & (mat_techos <= 7)) |
-                       (mat_techos == 9) |
-                       (mat_pisos == 2) |
-                       (excusado == 2) ~ "En rezago",
-                     TRUE ~ "Fuera de rezago"))
+  mutate(
+    across(starts_with("mat") & where(is.character),
+           ~ replace_na(parse_number(.x, na = c('', 'NA', '&')), 0)),
+    rezago = if_else(
+      ((tot_resid / num_cuarto) > 2.5) |
+        (mat_pared %in% 1:6) |
+        (mat_techos %in% c(1:4, 6, 7, 9)) |
+        (mat_pisos == 1) |
+        (excusado == 2),
+      "En rezago",
+      "Fuera de rezago"
+    )
+  ) 
+
+# Se verficó que que no haya NAs, pero se comenta por no estar en el código original
+# vivienda %>% 
+#   select(tot_resid, num_cuarto, starts_with("mat")) %>% 
+#   summarise(across(everything(), ~ any(is.na(.x))))
 ```
 
 
-```{r Calculamos el rezago total}
+```{r Rezago total}
 # En los dos factores: "En rezago" y "Fuera de rezago"
 rezago_total <- vivienda %>% 
   group_by(rezago) %>%
-  dplyr::summarize(total = sum(factor), .groups = "drop") %>% 
+  summarize(total = sum(factor), .groups = "drop") %>% 
   mutate(pct = round(total / sum(total) * 100, 2))
 
-rezago_total
+rezago_total 
+  
 ```
 
 
+# Análisis gráfico
 ```{r Gráfico: Rezago total (sencillo)}
 # Colores de gráfico
 colores <- c("#E13F29", "#D69A80", "#FFFFFF")
@@ -148,15 +131,14 @@ ggplot(df.data, aes(x = "", y = Valores, fill = Categorías)) +
   theme(plot.title = element_text(color = "black", size = 14, face = "bold", hjust = 0.5))
 
 ggsave("imagenes/Figura_1.png", plot = last_plot(), width = 9, height = 4, units = "in", dpi = 150)
-rm(df.data)
 ```
 
 
 ```{r Calculamos el rezago por entidad}
-rezago_entidad <- vivienda %>% 
-  srvyr::group_by(nom_ent, rezago) %>%
-  dplyr::summarize(rez_ent = sum(factor), .groups = "drop") %>% 
-  filter(rezago == "En rezago") %>% 
+rezago_entidad <- vivienda %>%
+  group_by(nom_ent, rezago) %>%
+  summarize(rez_ent = sum(factor), .groups = "drop") %>%
+  filter(rezago == "En rezago") %>%
   mutate(pct_ent = rez_ent / sum(rez_ent) * 100)
 
 rezago_entidad
@@ -164,11 +146,14 @@ rezago_entidad
 
 
 ```{r Gráfico: Rezago por entidad}
-ggplot(rezago_entidad,
-       aes(x=pct_ent, y=reorder(nom_ent,pct_ent))) +
-  geom_bar(stat="identity", color = "white", position="dodge") +
+
+ggplot(
+  rezago_entidad,
+  aes(x = pct_ent, y = fct_reorder(nom_ent, pct_ent))
+) +
+  geom_bar(stat = "identity", color = "white", position = "dodge") +
   geom_col(aes(fill = pct_ent)) +
-  scale_fill_gradient(low=colores[2], high = colores[1]) +
+  scale_fill_gradient(low = colores[2], high = colores[1]) +
   labs(
     title = "Porcentaje del total del rezago habitacional",
     subtitle = "Fuente: INEGI. Encuesta Nacional de Ingresos y Gastos de los Hogares (ENIGH) 2018",
@@ -177,15 +162,21 @@ ggplot(rezago_entidad,
     x = "",
     y = ""
   ) +
-  theme(plot.title = element_text(color = "black", 
-                                  size = 14, 
-                                  face = "bold", 
-                                  hjust = 0.5,
-                                  lineheight = 0.9),
-        plot.subtitle = element_text(color = "black",
-                                     size = 8, 
-                                     hjust = 0.5,
-                                     lineheight = 0.9))
+  theme(
+    plot.title = element_text(
+      color = "black",
+      size = 14,
+      face = "bold",
+      hjust = 0.5,
+      lineheight = 0.9
+    ),
+    plot.subtitle = element_text(
+      color = "black",
+      size = 8,
+      hjust = 0.5,
+      lineheight = 0.9
+    )
+  )
 
 ggsave("imagenes/Figura_2.png", plot = last_plot(), width = 6, height = 9, units = "in", dpi = 600)
 ```
@@ -193,14 +184,14 @@ ggsave("imagenes/Figura_2.png", plot = last_plot(), width = 6, height = 9, units
 
 ```{r Calculamos el rezago en cada entidad}
 con_rezago_entidad <- vivienda %>% 
-  srvyr::group_by(nom_ent, rezago) %>%
-  dplyr::summarize(rez_ent = sum(factor), .groups = "drop") %>% 
+  group_by(nom_ent, rezago) %>%
+  summarize(rez_ent = sum(factor), .groups = "drop") %>% 
   filter(rezago == "En rezago") %>% 
   select(nom_ent, rez_ent)
 
 sin_rezago_entidad <- vivienda %>% 
-  srvyr::group_by(nom_ent, rezago) %>%
-  dplyr::summarize(rez_ent = sum(factor), .groups = "drop") %>% 
+  group_by(nom_ent, rezago) %>%
+  summarize(rez_ent = sum(factor), .groups = "drop") %>% 
   filter(rezago == "Fuera de rezago") %>% 
   select(nom_ent, rez_ent)
 names(sin_rezago_entidad) <- c("nom_ent", "rez_nac")
@@ -209,10 +200,6 @@ names(sin_rezago_entidad) <- c("nom_ent", "rez_nac")
 rezago_nacional <- merge (con_rezago_entidad, 
                           sin_rezago_entidad, 
                           by = "nom_ent")
-
-# Eliminamos las variables innecesarias:
-rm(con_rezago_entidad)
-rm(sin_rezago_entidad)
 
 rezago_nacional <- rezago_nacional %>% 
   mutate(rez_tot = rez_ent + rez_nac,
@@ -223,11 +210,13 @@ rezago_nacional
 
 
 ```{r Gráfico: Rezago nacional dentro de cada entidad}
-ggplot(rezago_nacional,
-       aes(x=pct, y=reorder(nom_ent, pct))) +
-  geom_bar(stat="identity", color = "white", position="dodge") +
+ggplot(
+  rezago_nacional,
+  aes(x = pct, y = fct_reorder(nom_ent, pct))
+) +
+  geom_bar(stat = "identity", color = "white", position = "dodge") +
   geom_col(aes(fill = pct)) +
-  scale_fill_gradient(low=colores[2], high = colores[1]) +
+  scale_fill_gradient(low = colores[2], high = colores[1]) +
   labs(
     title = "México. Parque habitacional en rezago habitacional por entidad federativa, 2018 \n (% del total de cada entidad)",
     subtitle = "Fuente: INEGI. Encuesta Nacional de Ingresos y Gastos de los Hogares (ENIGH) 2018",
@@ -236,15 +225,21 @@ ggplot(rezago_nacional,
     x = "Porcentaje de rezago habitacional\nFuente: INEGI. Encuesta Nacional de Ingresos y Gastos de los Hogares (ENIGH) 2018",
     y = ""
   ) +
-  theme(plot.title = element_text(color = "black", 
-                                  size = 10, 
-                                  face = "bold", 
-                                  hjust = 0.5,
-                                  lineheight = 0.9),
-        plot.subtitle = element_text(color = "black",
-                                     size = 8, 
-                                     hjust = 0.5,
-                                     lineheight = 0.9))
+  theme(
+    plot.title = element_text(
+      color = "black",
+      size = 10,
+      face = "bold",
+      hjust = 0.5,
+      lineheight = 0.9
+    ),
+    plot.subtitle = element_text(
+      color = "black",
+      size = 8,
+      hjust = 0.5,
+      lineheight = 0.9
+    )
+  ) 
 
 ggsave("imagenes/Figura_3.png", plot = last_plot(), width = 6, height = 9, units = "in", dpi = 600)
 ```
