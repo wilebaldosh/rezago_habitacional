@@ -1,0 +1,209 @@
+# title: "Rezago habitacional en México"
+# description: El propósito de éste análisis es meramente educativo.
+# author: "Will Santana"
+# based_on: "Trabajo de Claudio @claudiodanielpc"
+# date: "12/29/2020"
+
+# Librerías 
+options(tidyverse.quiet = T)
+library(tidyverse)
+
+
+# Lectura
+# Cargamos los datos:
+# Vivienda
+vivi <- read_csv("data/enigh/viviendas.csv", 
+                 guess_max = 70e3) 
+# Catálogo de entidades
+cata <- readxl::read_excel("data/claves.xlsx", range ="A4:B36") %>% 
+  janitor::clean_names() %>% 
+  rename(cve_ent = clave_de_agee,
+         nom_ent = nombre_de_agee)
+
+
+# Limpieza (wrangling)
+# Unimos los dos dataframe y lo asignamos a vivienda
+vivienda <- vivi %>% 
+  mutate(cve_ent = str_sub(folioviv, end = 2L)) %>% 
+  left_join(cata, by = "cve_ent")
+
+# Vivienda Nacional
+vivienda_nacional <- vivienda
+
+
+# Hay columnas de material cuya lectura se realizó a caracter,
+# pero se parsean sin mayor problema.  
+# Una observación especial es mat_pisos, por contener "&" como representación de NA
+# Id del tipo de rezago
+vivienda <- vivienda %>%
+  mutate(
+    across(starts_with("mat") & where(is.character),
+           ~ replace_na(parse_number(.x, na = c('', 'NA', '&')), 0)),
+    rezago = if_else(
+      ((tot_resid / num_cuarto) > 2.5) |
+        (mat_pared %in% 1:6) |
+        (mat_techos %in% c(1:4, 6, 7, 9)) |
+        (mat_pisos == 1) |
+        (excusado == 2),
+      "En rezago",
+      "Fuera de rezago"
+    )
+  ) 
+
+# Se verficó que que no haya NAs, pero se comenta por no estar en el código original
+# Descomenté el siguiente código para verificar que no hay NA's
+vivienda %>%
+  select(tot_resid, num_cuarto, starts_with("mat")) %>%
+  summarise(across(everything(), ~ any(is.na(.x))))
+
+
+# Rezago total
+# En los dos factores: "En rezago" y "Fuera de rezago"
+rezago_total <- vivienda %>% 
+  group_by(rezago) %>%
+  summarize(total = sum(factor), .groups = "drop") %>% 
+  mutate(pct = round(total / sum(total) * 100, 2))
+
+
+# Análisis gráfico
+# Gráfico: Rezago total (sencillo)
+# Colores de gráfico
+colores <- c("#E13F29", "#D69A80", "#FFFFFF")
+
+slices <- c(rezago_total$total)
+lbls <- c("En rezago", "Fuera de rezago")
+pct <- round(slices/sum(slices)*100, 2)
+lbls <- paste(lbls, pct)
+lbls <- paste(lbls, "%", sep="")
+# Gráfico de pastel (pie chart), con los datos de rezago
+pie(slices, labels = lbls, edges = 200, main = "México. Parque habitacional por condición de rezago, 2018", col = colores, border = "white")
+
+
+# Gráfico: Rezago total (ggplot)
+# Colores de gráfico
+colores <- c("#E13F29", "#D69A80", "#FFFFFF")
+
+slices <- rezago_total$pct
+pct <- round(slices/sum(slices)*100, 2)
+lbls <- rezago_total$pct
+lbls <- paste(lbls, "%", sep="")
+
+df.data <- data.frame(
+  Categorías = rezago_total$rezago,
+  Valores = rezago_total$pct,
+  Etiquetas = lbls,
+  lab.ypos = c(87, 40)
+)
+
+ggplot(df.data, aes(x = "", y = Valores, fill = Categorías)) +
+  geom_bar(width = 1, stat = "identity", color = "white") +
+  coord_polar("y", start = 90) +
+  geom_text(aes(y = lab.ypos, label = Etiquetas), color = "white", size = 4) +
+  scale_fill_manual(values = colores) +
+  ggtitle("México. Parque habitacional por condición de rezago, 2018 \n (%)") +
+  theme_void() +
+  theme(plot.title = element_text(color = "black", size = 14, face = "bold", hjust = 0.5))
+
+ggsave("imagenes/Figura_1.png", plot = last_plot(), width = 9, height = 4, units = "in", dpi = 150)
+
+
+# Rezago por Entidad Federativa
+# Calculamos el rezago por entidad
+rezago_entidad <- vivienda %>%
+  group_by(nom_ent, rezago) %>%
+  summarize(rez_ent = sum(factor), .groups = "drop") %>%
+  filter(rezago == "En rezago") %>%
+  mutate(pct_ent = rez_ent / sum(rez_ent) * 100)
+
+# Gráfico: Rezago por entidad}
+ggplot(
+  rezago_entidad,
+  aes(x = pct_ent, y = fct_reorder(nom_ent, pct_ent))
+) +
+  geom_bar(stat = "identity", color = "white", position = "dodge") +
+  geom_col(aes(fill = pct_ent)) +
+  scale_fill_gradient(low = colores[2], high = colores[1]) +
+  labs(
+    title = "Porcentaje del total del rezago habitacional",
+    subtitle = "Fuente: INEGI. Encuesta Nacional de Ingresos y Gastos de los Hogares (ENIGH) 2018",
+    caption = "@willshDev",
+    fill = "Porcentaje",
+    x = "",
+    y = ""
+  ) +
+  theme(
+    plot.title = element_text(
+      color = "black",
+      size = 14,
+      face = "bold",
+      hjust = 0.5,
+      lineheight = 0.9
+    ),
+    plot.subtitle = element_text(
+      color = "black",
+      size = 8,
+      hjust = 0.5,
+      lineheight = 0.9
+    )
+  )
+
+ggsave("imagenes/Figura_2.png", plot = last_plot(), width = 6, height = 9, units = "in", dpi = 600)
+
+
+# Rezago dentro de cada Entidad Federativa
+# Calculamos el rezago en cada entidad}
+con_rezago_entidad <- vivienda %>% 
+  group_by(nom_ent, rezago) %>%
+  summarize(rez_ent = sum(factor), .groups = "drop") %>% 
+  filter(rezago == "En rezago") %>% 
+  select(nom_ent, rez_ent)
+
+sin_rezago_entidad <- vivienda %>% 
+  group_by(nom_ent, rezago) %>%
+  summarize(rez_ent = sum(factor), .groups = "drop") %>% 
+  filter(rezago == "Fuera de rezago") %>% 
+  select(nom_ent, rez_ent)
+names(sin_rezago_entidad) <- c("nom_ent", "rez_nac")
+
+# rezago_nacional <- cbind(con_rezago_entidad, sin_rezago_entidad$rez_ent)
+rezago_nacional <- merge (con_rezago_entidad, 
+                          sin_rezago_entidad, 
+                          by = "nom_ent")
+
+rezago_nacional <- rezago_nacional %>% 
+  mutate(rez_tot = rez_ent + rez_nac,
+         pct = rez_ent / rez_tot * 100)
+
+# Gráfico: Rezago nacional dentro de cada entidad
+ggplot(
+  rezago_nacional,
+  aes(x = pct, y = fct_reorder(nom_ent, pct))
+) +
+  geom_bar(stat = "identity", color = "white", position = "dodge") +
+  geom_col(aes(fill = pct)) +
+  scale_fill_gradient(low = colores[2], high = colores[1]) +
+  labs(
+    title = "México. Parque habitacional en rezago habitacional por entidad federativa, 2018 \n (% del total de cada entidad)",
+    subtitle = "Fuente: INEGI. Encuesta Nacional de Ingresos y Gastos de los Hogares (ENIGH) 2018",
+    caption = "@willshDev",
+    fill = "Porcentaje",
+    x = "Porcentaje de rezago habitacional\nFuente: INEGI. Encuesta Nacional de Ingresos y Gastos de los Hogares (ENIGH) 2018",
+    y = ""
+  ) +
+  theme(
+    plot.title = element_text(
+      color = "black",
+      size = 10,
+      face = "bold",
+      hjust = 0.5,
+      lineheight = 0.9
+    ),
+    plot.subtitle = element_text(
+      color = "black",
+      size = 8,
+      hjust = 0.5,
+      lineheight = 0.9
+    )
+  ) 
+
+ggsave("imagenes/Figura_3.png", plot = last_plot(), width = 6, height = 9, units = "in", dpi = 600)
